@@ -3,10 +3,10 @@ import requests
 import os
 import json
 import time
-from flask import Flask
+from flask import Flask, request, jsonify
 from flask_basicauth import BasicAuth
 
-_VERSION_ = "2020.07.08"
+_VERSION_ = "2020.07.10"
 _AUTHOR_ = "@timcappalli"
 
 app = Flask(__name__)
@@ -23,7 +23,7 @@ def token_handling():
     if os.path.isfile("cppm_token.json"):
         if DEBUG:
             print("[DEBUG] cppm_token.json exists.")
-        with open('cppm_token.json') as f:
+        with open("cppm_token.json") as f:
             token_file = json.load(f)
 
         current_time_plus_thirty = current_time + 30
@@ -59,8 +59,8 @@ def token_handling():
                 print(f"[DEBUG] {json_response}")
 
             # token caching
-            token_cache = {'access_token': json_response['access_token'], 'expires_on': current_time + int(json_response['expires_in']), 'resource': CPPM_FQDN}
-            with open('cppm_token.json', 'w') as tokenfile:
+            token_cache = {"access_token": json_response['access_token'], "expires_on": current_time + int(json_response['expires_in']), "resource": CPPM_FQDN}
+            with open("cppm_token.json", "w") as tokenfile:
                 json.dump(token_cache, tokenfile)
 
             if DEBUG:
@@ -78,14 +78,14 @@ def token_handling():
 
 # CPPM stuff
 @basic_auth.required
-@app.route("/cppm/session-count")
+@app.route("/cppm/session-count", methods=['GET'])
 def cppm_session_count():
     token = token_handling()
-    url = f'https://{CPPM_FQDN}/api/session'
+    url = f"https://{CPPM_FQDN}/api/session"
 
     headers = {
-        'Content-Type': 'application/json',
-        'Authorization': f'Bearer {token}'
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}"
     }
 
     filter = {"acctstoptime": {"$exists": False}}
@@ -104,18 +104,58 @@ def cppm_session_count():
         #return jsonify(session_count), 200
 
     except Exception as e:
-        print(f"[{r.status_code}]: {e}")
+        print({e})
 
-        return '', 500
+        return "", 500
+
+# Home Assistant stuff
+@basic_auth.required
+@app.route("/hass/presence-update", methods=['POST'])
+def update_hass_presence():
+    if request.json:
+        inbound_content = request.json
+
+        if inbound_content['hassEntityId'] and inbound_content['state']:
+
+            url = f"https://{HASS_FQDN}/api/states/{inbound_content['hassEntityId']}"
+
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {HASS_TOKEN}"
+            }
+
+            payload = {"state": inbound_content['state']}
+
+            try:
+                r = requests.post(url=url, headers=headers, json=payload, timeout=15)
+                r.raise_for_status()
+                response = r.json()
+                if DEBUG:
+                    print(f"[DEBUG] Response: {response}")
+
+                return jsonify(response), 200
+
+            except Exception as e:
+                print({e})
+
+                return f"", 500
+
+        else:
+            return "Missing required JSON keys.", 400
+    else:
+        return "Missing JSON object.", 400
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
+    print(f"Code Version:{_VERSION_}\n")
     DEBUG = False
 
     # GRAB ENV VARIABLES
     CPPM_FQDN = os.environ.get('CPPM_FQDN')
     CPPM_CLIENT_ID = os.environ.get('CPPM_CLIENT_ID')
     CPPM_CLIENT_SECRET = os.environ.get('CPPM_CLIENT_SECRET')
+    HASS_TOKEN = os.environ.get('HASS_TOKEN')
+    HASS_FQDN = os.environ.get('HASS_FQDN')
 
     APP_DEBUG = os.environ.get('APP_DEBUG')
     APP_PORT = os.environ.get('APP_PORT')
@@ -124,7 +164,7 @@ if __name__ == '__main__':
     TLS_CERT_FILENAME = os.environ.get('TLS_CERT_FILENAME')
     TLS_KEY_FILENAME = os.environ.get('TLS_KEY_FILENAME')
 
-    if APP_DEBUG == 'True':
+    if APP_DEBUG == "True":
         DEBUG = True
         print(f"App debugging ENABLED.\n")
 
@@ -137,17 +177,21 @@ if __name__ == '__main__':
         APP_TLS = False
 
     if CPPM_FQDN is None or CPPM_CLIENT_ID is None or CPPM_CLIENT_SECRET is None:
-        print('Missing required environment variables for CPPM.')
+        print("Missing required environment variables for CPPM.")
+        exit(1)
+
+    if HASS_TOKEN is None or HASS_FQDN is None:
+        print("Missing required environment variables for Home Assistant.")
         exit(1)
 
     if APP_USERNAME is None:
-        APP_USERNAME = 'hass-middleware'
+        APP_USERNAME = "hass-middleware"
 
     if APP_PASSWORD is None:
-        APP_PASSWORD = 'Home#AssistantIsGr8t!'
+        APP_PASSWORD = "Home#AssistantIsGr8t!"
 
     # STATIC GLOBALS
-    CPPM_TOKEN_ENDPOINT = f'https://{CPPM_FQDN}/api/oauth'
+    CPPM_TOKEN_ENDPOINT = f"https://{CPPM_FQDN}/api/oauth"
 
     print(CPPM_TOKEN_ENDPOINT)
 
@@ -159,12 +203,12 @@ if __name__ == '__main__':
     r = requests.get(url, timeout=10)
 
     if r.status_code == 405:
-        print('CPPM is reachable! Starting app...\n')
+        print("CPPM is reachable! Starting app...\n")
 
         if APP_TLS:
-            app.run(ssl_context=(TLS_CERT_FILENAME, TLS_KEY_FILENAME), host='0.0.0.0', port=APP_PORT, debug=DEBUG)
+            app.run(ssl_context=(TLS_CERT_FILENAME, TLS_KEY_FILENAME), host="0.0.0.0", port=APP_PORT, debug=DEBUG)
         else:
-            app.run(host='0.0.0.0', port=APP_PORT, debug=DEBUG)
+            app.run(host="0.0.0.0", port=APP_PORT, debug=DEBUG)
     else:
-        print('CPPM not reachable. Exiting...')
+        print("CPPM not reachable. Exiting...")
         exit(1)

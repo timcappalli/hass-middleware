@@ -1,7 +1,7 @@
 FROM python:3.8-slim-buster
 
 LABEL maintainer="@timcappalli"
-LABEL version="2020.07.09"
+LABEL version="2020.07.10"
 
 # Create app directory
 WORKDIR /app
